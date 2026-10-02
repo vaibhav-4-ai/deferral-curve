@@ -4,6 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deferral-curve"
+description = "Calibrated escalation policy for AI support agents — replaces guessed confidence thresholds with a measured deflection/error/cost curve (ECE, reliability diagrams, bootstrap CIs)."
+license = { text = "Apache-2.0" }
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = []
