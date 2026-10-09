@@ -11,8 +11,9 @@ A short record of the decisions I've made while building deferral-curve, and why
 ## Status
 
 Stage 0 (project skeleton and automatic checks): this is done.
-Stage 0.5 (cleanup): this is in progress.
+Stage 0.5 (cleanup): this is done.
+Stage 1 (practice questions and help pages, first small batch): this is done
 
 ## Next
 
-Stage 1.
+Stage 2.
