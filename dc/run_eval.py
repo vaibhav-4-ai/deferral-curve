@@ -35,8 +35,7 @@ def run():
         )
         print(f"{item['id']} correct={correct} verified={result.verified} degraded={result.degraded}")
     with open(RESULTS, "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        f.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
     answered = [r for r in rows if not r["degraded"]]
     right = sum(r["correct"] for r in answered)
     print(f"{right}/{len(answered)} correct when the model was available ({len(rows) - len(answered)} degraded)")
