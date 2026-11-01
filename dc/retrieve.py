@@ -31,6 +31,18 @@ class HybridRetriever:
         meaning[positions] = scores
         return word, meaning
 
+    def raw_features(self, query):
+        # Absolute (not rescaled) signals of how well the best page matches. Used later as confidence inputs.
+        word, meaning = self._full_scores(query)
+        meaning_sorted = np.sort(meaning)[::-1]
+        word_sorted = np.sort(word)[::-1]
+        return {
+            "top_meaning": float(meaning_sorted[0]),
+            "meaning_gap": float(meaning_sorted[0] - meaning_sorted[1]),
+            "top_word": float(word_sorted[0]),
+            "word_gap": float(word_sorted[0] - word_sorted[1]),
+        }
+
     def search(self, query, k=3, mode="hybrid"):
         # Returns [(doc_id, score), ...] best first. mode: "hybrid", "word" or "meaning".
         word, meaning = self._full_scores(query)
