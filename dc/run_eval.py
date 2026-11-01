@@ -33,7 +33,7 @@ def run():
                 "answer": result.answer,
             }
         )
-        print(f"{item['id']} correct={correct} verified={result.verified} degraded={result.degraded}")
+        print(f"{item['id']} correct={correct} verified={result.verified} degraded={result.degraded} {result.error}")
     with open(RESULTS, "w", encoding="utf-8") as f:
         f.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
     answered = [r for r in rows if not r["degraded"]]

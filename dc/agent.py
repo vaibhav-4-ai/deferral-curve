@@ -41,6 +41,7 @@ class AgentResult:
     llm_calls: int
     degraded: bool
     features: dict = field(default_factory=dict)
+    error: str = ""
 
 
 class Agent:
@@ -73,6 +74,7 @@ class Agent:
         hits = self.retriever.search(query, k=k)
         draft = ""
         verified = False
+        error = ""
         try:
             for _ in range(2):
                 hits = self.retriever.search(query, k=k)
@@ -87,7 +89,8 @@ class Agent:
                 if verified:
                     break
                 k = 5
-        except (BudgetExceeded, LookupError, httpx.HTTPError):
+        except (BudgetExceeded, LookupError, httpx.HTTPError) as exc:
+            error = f"{type(exc).__name__}: {exc}"
             if not draft:
                 # Graceful degradation: the model is unavailable, so fall back to retrieval only.
                 return AgentResult(
@@ -98,6 +101,7 @@ class Agent:
                     llm_calls=budget.used,
                     degraded=True,
                     features=features,
+                    error=error,
                 )
         return AgentResult(
             answer=draft,
@@ -107,4 +111,5 @@ class Agent:
             llm_calls=budget.used,
             degraded=False,
             features=features,
+            error=error,
         )
