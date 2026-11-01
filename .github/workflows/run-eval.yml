@@ -1,0 +1,29 @@
+name: Run agent on golden set
+
+# Manual only: click "Run workflow" in the Actions tab. Uses the GROQ_API_KEY repository secret,
+# then commits the saved model answers (cache) and per-question results back to the repo.
+on: workflow_dispatch
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: python -m dc run
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      - run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add evals/results.jsonl evals/llm_cache.json
+          git commit -m "Update agent results" || echo "nothing to commit"
+          git push

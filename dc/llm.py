@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 
 import httpx
@@ -13,21 +14,28 @@ DEFAULT_MODEL = "llama-3.3-70b-versatile"
 def groq_backend(api_key, model):
     # Returns a function (system, user) -> reply text that calls Groq's free API.
     def call(system, user):
-        response = httpx.post(
-            GROQ_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "temperature": 0,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
-            timeout=60,
-        )
+        for _ in range(4):
+            response = httpx.post(
+                GROQ_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": model,
+                    "temperature": 0,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                },
+                timeout=60,
+            )
+            if response.status_code == 429:
+                # Free tier rate limit: wait as long as Groq asks, then try again.
+                time.sleep(float(response.headers.get("retry-after", 10)))
+                continue
+            response.raise_for_status()
+            time.sleep(2.5)  # stay under the free tier's requests-per-minute limit
+            return response.json()["choices"][0]["message"]["content"]
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
 
     return call
 
