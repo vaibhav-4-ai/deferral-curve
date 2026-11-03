@@ -46,10 +46,12 @@ def test_questions_that_should_escalate_are_never_correct():
     assert not is_correct(item, FakeResult(answer="I don't know."))
 
 
-def test_tool_question_is_correct_when_a_tool_ran():
-    item = make_item(requires_tool=True, key_facts=[])
-    assert is_correct(item, FakeResult(tool_used="order_status"))
-    assert not is_correct(item, FakeResult(tool_used=None))
+def test_tool_question_needs_the_right_tool_and_the_right_facts():
+    item = make_item(requires_tool=True, expected_tool="order_status", key_facts=[["shipped"]])
+    assert is_correct(item, FakeResult(answer="Your order is shipped.", tool_used="order_status"))
+    assert not is_correct(item, FakeResult(answer="Your order is shipped.", tool_used=None))
+    assert not is_correct(item, FakeResult(answer="Your order is shipped.", tool_used="refund_status"))
+    assert not is_correct(item, FakeResult(answer="I don't know.", tool_used="order_status"))
 
 
 def test_degraded_answers_are_never_correct():

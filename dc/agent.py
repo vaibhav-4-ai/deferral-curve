@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from dc.tools import TOOLS, pick_tool
+from dc.tools import TOOLS, fresh_orders, pick_tool
 
 ANSWER_SYSTEM = (
     "You are QuickKart's customer support assistant. Answer ONLY from the context given. "
@@ -68,7 +68,7 @@ class Agent:
         picked = pick_tool(query)
         if picked is not None:
             tool_used, order_id = picked
-            tool_note = TOOLS[tool_used](order_id)
+            tool_note = TOOLS[tool_used](fresh_orders(), order_id)
 
         k = 3
         hits = self.retriever.search(query, k=k)

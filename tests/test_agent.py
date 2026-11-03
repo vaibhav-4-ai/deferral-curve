@@ -40,6 +40,15 @@ def test_tool_result_reaches_the_model(retriever, tmp_path):
     assert result.llm_calls == 2
 
 
+def test_cancelling_in_one_question_does_not_leak_into_the_next(retriever, tmp_path):
+    llm, seen = make_llm(tmp_path, "SUPPORTED")
+    agent = Agent(retriever, llm)
+    agent.answer("please cancel order 5530")
+    agent.answer("mera order #5530 ka status kya hai?")
+    assert "has been cancelled" in seen[0]
+    assert "processing" in seen[2]  # second question's draft prompt still sees the original order
+
+
 def test_failed_verification_retries_once_then_stops(retriever, tmp_path):
     llm, _ = make_llm(tmp_path, "UNSUPPORTED")
     result = Agent(retriever, llm).answer("mera refund kab aayega")

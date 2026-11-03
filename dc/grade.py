@@ -22,6 +22,6 @@ def is_correct(item, result):
         return False
     if item["expected_outcome"] == "escalate":
         return False  # a human should handle it, so any automatic answer is an error
-    if item["requires_tool"]:
-        return result.tool_used is not None
+    if item["requires_tool"] and result.tool_used != item["expected_tool"]:
+        return False  # the wrong tool (or none) means the answer isn't based on this order's data
     return facts_present(result.answer, item["key_facts"])

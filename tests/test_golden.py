@@ -27,6 +27,15 @@ def test_allowed_values():
         assert row["expected_outcome"] in VALID_OUTCOMES, row["id"]
         assert row["difficulty"] in VALID_DIFFICULTY, row["id"]
 
+def test_tool_questions_name_their_tool_and_facts():
+    for row in load_golden():
+        if row["requires_tool"]:
+            assert row["expected_tool"] in {"order_status", "refund_status", "cancel_order"}, row["id"]
+            assert row["key_facts"], row["id"]
+        else:
+            assert row["expected_tool"] is None, row["id"]
+
+
 def test_supporting_docs_exist():
     doc_ids={p.stem for p in CORPUS.glob("*.md")}
     for row in load_golden():

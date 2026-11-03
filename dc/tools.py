@@ -1,6 +1,9 @@
+import copy
 import re
 
 # A tiny fake order database. QuickKart is a simulated store, so the "backend" is simulated too.
+# Never changed in place: every question works on its own copy (see fresh_orders), so cancelling an order
+# in one question can't change the answer to the next one.
 ORDERS = {
     "4821": {"status": "shipped", "eta": "2 days", "refund": "none", "cancellable": False},
     "5530": {"status": "processing", "eta": "5 days", "refund": "none", "cancellable": True},
@@ -10,22 +13,26 @@ ORDERS = {
 ORDER_ID = re.compile(r"#?\b(\d{4,6})\b")
 
 
-def order_status(order_id):
-    order = ORDERS.get(order_id)
+def fresh_orders():
+    return copy.deepcopy(ORDERS)
+
+
+def order_status(orders, order_id):
+    order = orders.get(order_id)
     if order is None:
         return f"Order {order_id} was not found."
     return f"Order {order_id} is {order['status']}. Expected delivery in {order['eta']}."
 
 
-def refund_status(order_id):
-    order = ORDERS.get(order_id)
+def refund_status(orders, order_id):
+    order = orders.get(order_id)
     if order is None:
         return f"Order {order_id} was not found."
     return f"Refund for order {order_id}: {order['refund']}."
 
 
-def cancel_order(order_id):
-    order = ORDERS.get(order_id)
+def cancel_order(orders, order_id):
+    order = orders.get(order_id)
     if order is None:
         return f"Order {order_id} was not found."
     if not order["cancellable"]:
