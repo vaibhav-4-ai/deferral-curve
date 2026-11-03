@@ -16,3 +16,4 @@ jobs:
       - run: ruff check .
       - run: pytest
       - run: python -m dc eval
+      - run: python -m dc calibrate

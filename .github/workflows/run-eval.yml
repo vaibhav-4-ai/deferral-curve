@@ -21,9 +21,10 @@ jobs:
       - run: python -m dc run
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      - run: python -m dc calibrate
       - run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add -A evals
+          git add -A evals artifacts
           git commit -m "Update agent results" || echo "nothing to commit"
           git push

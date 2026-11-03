@@ -11,6 +11,10 @@ def main() -> None:
         from dc.eval_retrieval import report
 
         report()
+    elif args.command == "calibrate":
+        from dc.curve import calibrate
+
+        calibrate()
     elif args.command == "run":
         from dc.run_eval import run
 
