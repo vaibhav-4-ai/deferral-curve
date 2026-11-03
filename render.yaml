@@ -1,0 +1,11 @@
+# Render Blueprint: the same Docker image as the Hugging Face Space, on Render's free plan (512 MB, 0.1 CPU).
+services:
+  - type: web
+    name: deferral-curve
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass  # deploy only after GitHub CI is green
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false  # set by hand in the Render dashboard, never committed

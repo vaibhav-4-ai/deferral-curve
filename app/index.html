@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuickKart Support Demo</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --text:#1d1d1b; --muted:#6b6b66; --line:#e2e2dc;
+          --auto:#1f7a4d; --hatch:#a86b00; --human:#b3261e; --accent:#2f5bd3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141413; --card:#1e1e1c; --text:#ecece8; --muted:#a3a39c; --line:#33332f;
+            --auto:#5cc28f; --hatch:#e0a83a; --human:#f08a82; --accent:#8aa7ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:680px; margin:0 auto; padding:32px 16px 48px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 24px; }
+  form { display:flex; gap:8px; }
+  input { flex:1; min-width:0; padding:12px; font:inherit; color:var(--text); background:var(--card);
+          border:1px solid var(--line); border-radius:8px; }
+  button { padding:12px 18px; font:inherit; border:0; border-radius:8px; background:var(--accent);
+           color:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .examples { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0 24px; }
+  .examples button { background:var(--card); color:var(--text); border:1px solid var(--line);
+                     padding:6px 10px; font-size:.875rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .badge { display:inline-block; font-weight:600; font-size:.8rem; padding:2px 8px; border-radius:99px;
+           border:1px solid currentColor; }
+  .auto_resolve { color:var(--auto); } .escape_hatch { color:var(--hatch); } .escalate { color:var(--human); }
+  .meta { color:var(--muted); font-size:.875rem; margin-top:12px; }
+  details { margin-top:12px; color:var(--muted); font-size:.875rem; }
+  .hatch { margin-top:12px; font-size:.875rem; }
+  footer { color:var(--muted); font-size:.8rem; margin-top:32px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>QuickKart support, with a measured hand-off</h1>
+  <p class="lead">Ask in English or Hinglish. The bot only answers on its own when its calibrated confidence
+    clears a threshold chosen to keep errors within a 10% budget. Otherwise it hands you to a human.</p>
+
+  <form id="ask">
+    <input id="q" maxlength="300" placeholder="e.g. refund kab tak aayega?" autocomplete="off" required>
+    <button id="go">Ask</button>
+  </form>
+  <div class="examples">
+    <button type="button">refund kab tak aayega?</button>
+    <button type="button">mera order #4821 kahan hai?</button>
+    <button type="button">can I pay with EMI?</button>
+    <button type="button">gift card kaise redeem karu?</button>
+  </div>
+
+  <div id="out" class="card" hidden>
+    <span id="badge" class="badge"></span>
+    <p id="answer"></p>
+    <div id="hatch" class="hatch" hidden>Not what you needed? <a href="#" onclick="return false">Talk to a human</a></div>
+    <details id="draftbox" hidden><summary>What the bot drafted but held back</summary><p id="draft"></p></details>
+    <div id="meta" class="meta"></div>
+  </div>
+
+  <footer>A demo with a fictional store and made-up orders (try 4821, 5530, 6102). Questions are sent to Groq
+    to generate answers and aren't stored by this site. Don't type personal details.</footer>
+</main>
+<script>
+  const LABELS = { auto_resolve: "Answered", escape_hatch: "Answered, with a human option", escalate: "Handed to a human" };
+  const $ = (id) => document.getElementById(id);
+
+  async function ask(query) {
+    $("go").disabled = true;
+    try {
+      const res = await fetch("/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ query }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Something went wrong");
+      show(data);
+    } catch (err) {
+      show({ outcome: "escalate", answer: err.message, bot_draft: "", sources: [] });
+    } finally {
+      $("go").disabled = false;
+    }
+  }
+
+  function show(d) {
+    $("out").hidden = false;
+    $("badge").className = "badge " + d.outcome;
+    $("badge").textContent = LABELS[d.outcome];
+    $("answer").textContent = d.answer;
+    $("hatch").hidden = d.outcome !== "escape_hatch";
+    $("draftbox").hidden = !(d.outcome === "escalate" && d.bot_draft);
+    $("draft").textContent = d.bot_draft || "";
+    const bits = [];
+    if (d.confidence != null) bits.push("confidence " + Math.round(d.confidence * 100) + "%");
+    if (d.degraded) bits.push("model unavailable, retrieval-only fallback");
+    if (d.tool_used) bits.push("tool: " + d.tool_used);
+    if (d.sources && d.sources.length) bits.push("sources: " + d.sources.join(", "));
+    if (d.latency_ms != null) bits.push(d.latency_ms + " ms");
+    $("meta").textContent = bits.join(" · ");
+  }
+
+  $("ask").addEventListener("submit", (e) => { e.preventDefault(); ask($("q").value.trim()); });
+  document.querySelectorAll(".examples button").forEach((b) =>
+    b.addEventListener("click", () => { $("q").value = b.textContent; ask(b.textContent); }));
+</script>
+</body>
+</html>

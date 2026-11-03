@@ -19,6 +19,10 @@ def main() -> None:
         from dc.run_eval import run
 
         run()
+    elif args.command == "serve":
+        import uvicorn
+
+        uvicorn.run("app.main:app", host="0.0.0.0", port=7860)
     else:
         print(f"{args.command}: not implemented")
 

@@ -17,3 +17,42 @@ jobs:
       - run: pytest
       - run: python -m dc eval
       - run: python -m dc calibrate
+
+  # Runs only after every check above passed, so a failing test blocks the deploy.
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Push to the Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE" ]; then
+            echo "HF_TOKEN secret or HF_SPACE variable not set; skipping deploy"
+            exit 0
+          fi
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git checkout -q --orphan space
+          # The Space doesn't need the plots, and Hugging Face rejects plain-git binary files.
+          rm -f artifacts/*.png
+          cat > README.md <<EOF
+          ---
+          title: deferral-curve
+          emoji: 🧭
+          colorFrom: blue
+          colorTo: green
+          sdk: docker
+          app_port: 7860
+          pinned: false
+          license: apache-2.0
+          ---
+
+          Live demo of [deferral-curve](https://github.com/${GITHUB_REPOSITORY}).
+          EOF
+          git add -A
+          git commit -qm "Deploy ${GITHUB_SHA::7}"
+          git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" space:main

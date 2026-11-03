@@ -14,7 +14,7 @@ RESULTS = Path(__file__).parent.parent / "evals" / "results.jsonl"
 def run():
     # Runs the agent on every golden question and saves one line per question: the signals it
     # produced and whether its answer was right. Needs GROQ_API_KEY the first time; later runs replay the cache.
-    agent = Agent(HybridRetriever(load_corpus()), default_llm())
+    agent = Agent(HybridRetriever(load_corpus()), default_llm(pace=2.5))
     rows = []
     for item in load_golden():
         result = agent.answer(item["query"])

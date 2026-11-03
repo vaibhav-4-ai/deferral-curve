@@ -11,7 +11,8 @@ requires-python = ">=3.11"
 dependencies = ["bm25s", "model2vec", "httpx"]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "matplotlib"]
+serve = ["fastapi", "uvicorn", "prometheus-client"]
+dev = ["pytest", "ruff", "matplotlib", "fastapi", "prometheus-client"]
 
 [tool.setuptools]
 packages = ["dc", "app"]
