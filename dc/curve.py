@@ -175,6 +175,11 @@ def plot(per_seed, y, raw, out):
 
 def calibrate(rows=None, out=OUT):
     rows = load_rows() if rows is None else rows
+    skipped = [r for r in rows if r["degraded"]]
+    if skipped:
+        # Rows where the model was unreachable (usually the free quota) say nothing about the policy. Leave them out.
+        print(f"leaving out {len(skipped)} questions where the model was unavailable; rerun the agent to fill them")
+        rows = [r for r in rows if not r["degraded"]]
     X, y, raw, per_seed = evaluate(rows)
     summary = summarize(per_seed, y)
 

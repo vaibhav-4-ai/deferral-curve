@@ -13,14 +13,20 @@ DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 def groq_backend(api_key, model):
     # Returns a function (system, user) -> reply text that calls Groq's free API.
+    state = {"exhausted": False}
+    payload = {"model": model, "temperature": 0}
+    if model.startswith("openai/gpt-oss"):
+        payload["reasoning_effort"] = "low"  # fewer hidden reasoning tokens, so the free daily quota lasts
+
     def call(system, user):
+        if state["exhausted"]:
+            raise LookupError("Groq quota exhausted earlier in this run; rerun later to continue from the cache")
         for _ in range(4):
             response = httpx.post(
                 GROQ_URL,
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "model": model,
-                    "temperature": 0,
+                    **payload,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
@@ -29,13 +35,14 @@ def groq_backend(api_key, model):
                 timeout=60,
             )
             if response.status_code == 429:
-                # Free tier rate limit: wait as long as Groq asks, then try again.
-                time.sleep(float(response.headers.get("retry-after", 10)))
+                # Free tier rate limit: wait as long as Groq asks (at most a minute), then try again.
+                time.sleep(min(float(response.headers.get("retry-after", 10)), 60))
                 continue
             response.raise_for_status()
             time.sleep(2.5)  # stay under the free tier's requests-per-minute limit
             return response.json()["choices"][0]["message"]["content"]
-        response.raise_for_status()
+        state["exhausted"] = True
+        raise LookupError("Groq rate limit still hit after 4 tries; rerun later to continue from the cache")
 
     return call
 
