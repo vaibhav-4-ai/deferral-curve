@@ -1,8 +1,8 @@
 name: Keep the demo awake
-# Free Hugging Face Spaces go to sleep after 48 hours without visitors. A ping twice a day keeps the link live.
+# Render's free plan puts the site to sleep after 15 minutes without visitors. A ping every 10 minutes keeps it live.
 on:
   schedule:
-    - cron: "17 */12 * * *"
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,8 +12,7 @@ jobs:
     steps:
       - name: Ping /health
         env:
-          HF_SPACE: ${{ vars.HF_SPACE }}
+          DEMO_URL: ${{ vars.DEMO_URL }}
         run: |
-          if [ -z "$HF_SPACE" ]; then echo "HF_SPACE variable not set; nothing to ping"; exit 0; fi
-          host=$(echo "$HF_SPACE" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-          curl --fail --silent --show-error --max-time 120 --retry 3 --retry-delay 30 "https://${host}.hf.space/health"
+          if [ -z "$DEMO_URL" ]; then echo "DEMO_URL variable not set; nothing to ping"; exit 0; fi
+          curl --fail --silent --show-error --max-time 120 --retry 3 --retry-delay 30 "${DEMO_URL%/}/health"

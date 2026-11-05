@@ -1,7 +1,7 @@
-# One image for both hosts: Hugging Face Spaces (port 7860) and Render (sets $PORT).
+# Runs on Render's free plan (which sets $PORT); defaults to port 7860 anywhere else.
 FROM python:3.11-slim
 
-# Hugging Face Spaces run containers as user 1000.
+# Run as a normal user, not root.
 RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user \
