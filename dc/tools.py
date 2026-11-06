@@ -39,7 +39,8 @@ def cancel_order(orders, order_id):
         return f"Order {order_id} is {order['status']} and can no longer be cancelled."
     order["status"] = "cancelled"
     order["cancellable"] = False
-    return f"Order {order_id} has been cancelled."
+    # Worded so the model can't read it as "was already cancelled before" (it did, on q103).
+    return f"Done: order {order_id} was cancellable, and it is now cancelled at the customer's request."
 
 
 TOOLS = {

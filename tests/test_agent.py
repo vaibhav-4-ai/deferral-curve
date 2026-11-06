@@ -45,7 +45,7 @@ def test_cancelling_in_one_question_does_not_leak_into_the_next(retriever, tmp_p
     agent = Agent(retriever, llm)
     agent.answer("please cancel order 5530")
     agent.answer("mera order #5530 ka status kya hai?")
-    assert "has been cancelled" in seen[0]
+    assert "now cancelled" in seen[0]
     assert "processing" in seen[2]  # second question's draft prompt still sees the original order
 
 

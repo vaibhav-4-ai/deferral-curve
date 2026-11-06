@@ -16,6 +16,9 @@ ERROR_BUDGET = 0.10
 COST_PER_LLM_CALL = 0.05
 COST_PER_HUMAN_TICKET = 25.0
 
+# How pessimistic the budget-safe threshold is: a one-sided 95% upper bound on the error rate.
+SAFE_Z = 1.645
+
 SEEDS = (0, 1, 2)
 N_BOOT = 1000
 
@@ -35,13 +38,28 @@ def operating_point(conf, correct, t):
     return float(covered.mean()), float(1.0 - correct[covered].mean())
 
 
-def pick_threshold(conf, correct, budget):
+def risk_upper_bound(errors, n, z):
+    # Wilson score upper bound on the true error rate, after seeing `errors` mistakes in `n` auto-resolved answers.
+    # z=0 gives the measured rate itself; z=1.645 gives a one-sided 95% upper bound.
+    if n == 0:
+        return 1.0
+    p = errors / n
+    centre = p + z * z / (2 * n)
+    spread = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return float((centre + spread) / (1 + z * z / n))
+
+
+def pick_threshold(conf, correct, budget, z=0.0):
     # The lowest threshold (= most questions auto-resolved) whose error rate stays within budget.
+    # z=0 trusts the error rate measured on the calibration half. z>0 demands that even a pessimistic
+    # estimate of it stays within budget, so the budget also holds on questions the policy hasn't seen.
     best_t, best_cov = None, 0.0
     for t in np.unique(conf):
-        cov, risk = operating_point(conf, correct, t)
-        if risk <= budget and cov > best_cov:
-            best_t, best_cov = float(t), cov
+        covered = conf >= t
+        n = int(covered.sum())
+        errors = n - float(correct[covered].sum())
+        if risk_upper_bound(errors, n, z) <= budget and n / len(conf) > best_cov:
+            best_t, best_cov = float(t), n / len(conf)
     return best_t
 
 
@@ -108,18 +126,22 @@ def evaluate(rows):
         p_test = model.predict(X[test])
         t_raw = pick_threshold(raw[cal], y[cal], ERROR_BUDGET)
         t_cal = pick_threshold(model.predict(X[cal]), y[cal], ERROR_BUDGET)
+        t_safe = pick_threshold(model.predict(X[cal]), y[cal], ERROR_BUDGET, z=SAFE_Z)
         per_seed.append(
             {
                 "guessed": operating_point(raw[test], y[test], GUESSED_THRESHOLD),
                 "raw_measured": operating_point(raw[test], y[test], t_raw),
                 "calibrated": operating_point(p_test, y[test], t_cal),
+                "budget_safe": operating_point(p_test, y[test], t_safe),
                 "cost_guessed": cost_per_query(raw[test], calls[test], GUESSED_THRESHOLD),
                 "cost_calibrated": cost_per_query(p_test, calls[test], t_cal),
+                "cost_budget_safe": cost_per_query(p_test, calls[test], t_safe),
                 "ece_raw": ece(raw[test], y[test]),
                 "ece_calibrated": ece(p_test, y[test]),
                 "test": test,
                 "p_test": p_test,
-                "t_cal": t_cal,
+                "t_calibrated": t_cal,
+                "t_budget_safe": t_safe,
             }
         )
     return X, y, raw, per_seed
@@ -130,16 +152,20 @@ def summarize(per_seed, y):
         vals = [s[key] if i is None else s[key][i] for s in per_seed]
         return float(np.mean(vals))
 
-    # Each seed's own held-out operating point next to its own interval, so a point always sits inside its CI.
-    seeds = [
-        {
-            "seed": seed,
-            "coverage": s["calibrated"][0],
-            "risk": s["calibrated"][1],
-            "ci": bootstrap_ci(s["p_test"], y[s["test"]], s["t_cal"], seed=seed),
-        }
-        for seed, s in zip(SEEDS, per_seed, strict=True)
-    ]
+    def policy(name):
+        # Mean over seeds, plus each seed's own held-out point next to its own 95% interval.
+        seeds = [
+            {
+                "seed": seed,
+                "coverage": s[name][0],
+                "risk": s[name][1],
+                "ci": bootstrap_ci(s["p_test"], y[s["test"]], s[f"t_{name}"], seed=seed),
+            }
+            for seed, s in zip(SEEDS, per_seed, strict=True)
+        ]
+        return {"coverage": mean_of(name, 0), "risk": mean_of(name, 1),
+                "cost_per_query": mean_of(f"cost_{name}"), "per_seed": seeds}
+
     return {
         "n_questions": len(y),
         "error_budget": ERROR_BUDGET,
@@ -147,8 +173,8 @@ def summarize(per_seed, y):
         "guessed": {"coverage": mean_of("guessed", 0), "risk": mean_of("guessed", 1),
                     "cost_per_query": mean_of("cost_guessed")},
         "raw_measured": {"coverage": mean_of("raw_measured", 0), "risk": mean_of("raw_measured", 1)},
-        "calibrated": {"coverage": mean_of("calibrated", 0), "risk": mean_of("calibrated", 1),
-                       "cost_per_query": mean_of("cost_calibrated"), "per_seed": seeds},
+        "calibrated": policy("calibrated"),
+        "budget_safe": {**policy("budget_safe"), "z": SAFE_Z},
         "ece": {"raw": mean_of("ece_raw"), "calibrated": mean_of("ece_calibrated")},
     }
 
@@ -165,6 +191,9 @@ def plot(per_seed, y, raw, out):
     for name, conf in (("raw similarity", raw[test]), ("calibrated", first["p_test"])):
         pts = sorted(curve_points(conf, y[test]))
         ax.plot([c for c, _ in pts], [r for _, r in pts], marker="o", label=name)
+    for key, label, mark in (("calibrated", "chosen: measured error", "s"), ("budget_safe", "chosen: budget-safe", "D")):
+        cov, risk = first[key]
+        ax.scatter([cov], [risk], s=90, marker=mark, color="black", zorder=3, label=label)
     ax.axhline(ERROR_BUDGET, linestyle="--", color="grey", label="error budget")
     ax.set_xlabel("coverage (share auto-resolved)")
     ax.set_ylabel("risk (error rate on auto-resolved)")
@@ -198,25 +227,31 @@ def calibrate(rows=None, out=OUT):
     X, y, raw, per_seed = evaluate(rows)
     summary = summarize(per_seed, y)
 
-    # The deployed policy: fit on every labelled question, threshold chosen to hold the error budget.
+    # The deployed policy: fit on every labelled question; the live site uses the budget-safe threshold,
+    # because "holds a 10% error budget" is the claim. The measured-error threshold is kept for comparison.
     final = Calibrator().fit(X, y)
-    threshold = pick_threshold(final.predict(X), y, ERROR_BUDGET)
+    p_all = final.predict(X)
+    threshold_measured = pick_threshold(p_all, y, ERROR_BUDGET)
+    threshold_safe = pick_threshold(p_all, y, ERROR_BUDGET, z=SAFE_Z)
 
     out.mkdir(parents=True, exist_ok=True)
     (out / "calibration.json").write_text(
-        json.dumps({"model": final.to_dict(), "threshold": threshold, "error_budget": ERROR_BUDGET}, indent=1),
+        json.dumps({"model": final.to_dict(), "threshold": threshold_safe,
+                    "threshold_measured_error": threshold_measured, "error_budget": ERROR_BUDGET}, indent=1),
         encoding="utf-8",
     )
     (out / "curve.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     plot(per_seed, y, raw, out)
 
-    g, c = summary["guessed"], summary["calibrated"]
-    print(f"{summary['n_questions']} questions, error budget {ERROR_BUDGET:.0%}, mean of {len(SEEDS)} seeds")
+    g = summary["guessed"]
+    print(f"{summary['n_questions']} questions, error budget {ERROR_BUDGET:.0%}, held-out halves, mean of {len(SEEDS)} seeds")
     print(f"  guessed threshold : auto-resolves {g['coverage']:.0%} at {g['risk']:.0%} error, Rs {g['cost_per_query']:.2f}/query")
-    print(f"  calibrated policy : auto-resolves {c['coverage']:.0%} at {c['risk']:.0%} error, Rs {c['cost_per_query']:.2f}/query")
-    for s in c["per_seed"]:
-        cov, risk = s["ci"]["coverage"], s["ci"]["risk"]
-        print(f"    seed {s['seed']}: auto-resolves {s['coverage']:.0%} [{cov[0]:.0%}, {cov[1]:.0%}]"
-              f" at {s['risk']:.0%} error [{risk[0]:.0%}, {risk[1]:.0%}]  (95% CI)")
+    for key, label in (("calibrated", "calibrated, measured error"), ("budget_safe", "calibrated, budget-safe")):
+        c = summary[key]
+        print(f"  {label:26}: auto-resolves {c['coverage']:.0%} at {c['risk']:.0%} error, Rs {c['cost_per_query']:.2f}/query")
+        for s in c["per_seed"]:
+            cov, risk = s["ci"]["coverage"], s["ci"]["risk"]
+            print(f"    seed {s['seed']}: auto-resolves {s['coverage']:.0%} [{cov[0]:.0%}, {cov[1]:.0%}]"
+                  f" at {s['risk']:.0%} error [{risk[0]:.0%}, {risk[1]:.0%}]  (95% CI)")
     print(f"  ECE raw {summary['ece']['raw']:.3f} -> calibrated {summary['ece']['calibrated']:.3f}")
     return summary
