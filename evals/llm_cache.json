@@ -524,5 +524,9 @@
  "bdbf67999aca6b4621239278298d50dc9d5e2d321c04595412b913f0f49beef8": "I don't know.",
  "654fd9886ad0ea34a732017f97e69ce4add1042a21fe88b3479087c8a7a55f81": "UNSUPPORTED",
  "63d40be0731406cdcc6f5265708d8b73388d30f1d779fe6bfb340fa97cc10459": "I don't know.",
- "c3dc1f1c7756edbfe99917cc4417ba81b1f966406543c48b3552004385c5161e": "UNSUPPORTED"
+ "c3dc1f1c7756edbfe99917cc4417ba81b1f966406543c48b3552004385c5161e": "UNSUPPORTED",
+ "bd557e7c491c4a0f5697ed380cc48e1302c48159903b68cb8cfec50f80fc5288": "Your order #5530 has been successfully cancelled. If you need anything else, just let us know!",
+ "e13a19829c23706d0c30f72f8193957b996920f537b76a93c8602b897245ea75": "SUPPORTED",
+ "c2e46d094c4dafcf6768be62d9bcf3cc1e3f5dfdb2c35cacd13a1b6d4dae57c0": "Your order #5530 has been cancelled successfully.",
+ "5a2d2e8d15bc8dbaea8e0471d25677fe1090936a813bda883fc10ab877182b6f": "SUPPORTED"
 }
