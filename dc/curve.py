@@ -222,6 +222,8 @@ def plot(per_seed, y, raw, out):
     for name, conf in (("raw similarity", raw), ("calibrated (held-out)", first["p_held"])):
         bins = reliability_bins(conf, y)
         ax.plot([b[0] for b in bins], [b[1] for b in bins], marker="o", label=name)
+        for x, acc, count in bins:
+            ax.annotate(str(count), (x, acc), textcoords="offset points", xytext=(6, -10), fontsize=8)
     ax.set_xlabel("stated confidence")
     ax.set_ylabel("actual accuracy")
     ax.set_title(f"Reliability diagram ({N_FOLDS}-fold held-out, seed 0)")
