@@ -20,6 +20,7 @@ COST_PER_HUMAN_TICKET = 25.0
 SAFE_Z = 1.645
 
 SEEDS = (0, 1, 2)
+N_FOLDS = 5
 N_BOOT = 1000
 
 
@@ -51,7 +52,7 @@ def risk_upper_bound(errors, n, z):
 
 def pick_threshold(conf, correct, budget, z=0.0):
     # The lowest threshold (= most questions auto-resolved) whose error rate stays within budget.
-    # z=0 trusts the error rate measured on the calibration half. z>0 demands that even a pessimistic
+    # z=0 trusts the error rate measured on the calibration data. z>0 demands that even a pessimistic
     # estimate of it stays within budget, so the budget also holds on questions the policy hasn't seen.
     best_t, best_cov = None, 0.0
     for t in np.unique(conf):
@@ -91,15 +92,22 @@ def reliability_bins(conf, correct, bins=5):
     ]
 
 
-def bootstrap_ci(conf, correct, t, seed):
-    # 95% interval from resampling the test questions. A resample where nothing is auto-resolved has no
+def decision_point(auto, correct):
+    # Coverage and risk from per-question decisions (True = the bot answered on its own).
+    if not auto.any():
+        return 0.0, 0.0
+    return float(auto.mean()), float(1.0 - correct[auto].mean())
+
+
+def bootstrap_ci(auto, correct, seed):
+    # 95% interval from resampling the questions. A resample where nothing is auto-resolved has no
     # error rate at all, so it's left out of the risk interval instead of counting as 0% error.
     rng = np.random.default_rng(seed)
-    n = len(conf)
+    n = len(auto)
     coverage, risk = [], []
     for _ in range(N_BOOT):
         s = rng.integers(0, n, n)
-        cov, r = operating_point(conf[s], correct[s], t)
+        cov, r = decision_point(auto[s], correct[s])
         coverage.append(cov)
         if cov > 0:
             risk.append(r)
@@ -112,70 +120,76 @@ def curve_points(conf, correct):
     return [operating_point(conf, correct, float(t)) for t in np.unique(conf)]
 
 
+def above(conf, t):
+    return np.zeros(len(conf), dtype=bool) if t is None else conf >= t
+
+
 def evaluate(rows):
+    # K-fold cross-fitting: every question is scored by a calibrator (and a threshold) fitted on the
+    # OTHER folds, so all 170 questions are held-out test questions, and each fit still sees 80% of the data.
     X = np.array([features(r) for r in rows])
     y = np.array([1.0 if r["correct"] else 0.0 for r in rows])
     raw = np.array([raw_confidence(r) for r in rows])
     calls = np.array([r["llm_calls"] for r in rows], dtype=float)
+    n = len(rows)
 
     per_seed = []
     for seed in SEEDS:
-        order = np.random.default_rng(seed).permutation(len(rows))
-        cal, test = order[: len(rows) // 2], order[len(rows) // 2 :]
-        model = Calibrator().fit(X[cal], y[cal])
-        p_test = model.predict(X[test])
-        t_raw = pick_threshold(raw[cal], y[cal], ERROR_BUDGET)
-        t_cal = pick_threshold(model.predict(X[cal]), y[cal], ERROR_BUDGET)
-        t_safe = pick_threshold(model.predict(X[cal]), y[cal], ERROR_BUDGET, z=SAFE_Z)
+        folds = np.array_split(np.random.default_rng(seed).permutation(n), N_FOLDS)
+        p_held = np.zeros(n)
+        auto = {name: np.zeros(n, dtype=bool) for name in ("raw_measured", "calibrated", "budget_safe")}
+        auto["guessed"] = raw >= GUESSED_THRESHOLD  # nothing to fit: the guessed control
+        for fold in folds:
+            train = np.setdiff1d(np.arange(n), fold)
+            model = Calibrator().fit(X[train], y[train])
+            p_train = model.predict(X[train])
+            p_held[fold] = model.predict(X[fold])
+            auto["raw_measured"][fold] = above(raw[fold], pick_threshold(raw[train], y[train], ERROR_BUDGET))
+            auto["calibrated"][fold] = above(p_held[fold], pick_threshold(p_train, y[train], ERROR_BUDGET))
+            auto["budget_safe"][fold] = above(
+                p_held[fold], pick_threshold(p_train, y[train], ERROR_BUDGET, z=SAFE_Z))
         per_seed.append(
             {
-                "guessed": operating_point(raw[test], y[test], GUESSED_THRESHOLD),
-                "raw_measured": operating_point(raw[test], y[test], t_raw),
-                "calibrated": operating_point(p_test, y[test], t_cal),
-                "budget_safe": operating_point(p_test, y[test], t_safe),
-                "cost_guessed": cost_per_query(raw[test], calls[test], GUESSED_THRESHOLD),
-                "cost_calibrated": cost_per_query(p_test, calls[test], t_cal),
-                "cost_budget_safe": cost_per_query(p_test, calls[test], t_safe),
-                "ece_raw": ece(raw[test], y[test]),
-                "ece_calibrated": ece(p_test, y[test]),
-                "test": test,
-                "p_test": p_test,
-                "t_calibrated": t_cal,
-                "t_budget_safe": t_safe,
+                "auto": auto,
+                "points": {name: decision_point(a, y) for name, a in auto.items()},
+                # Every question is resolved: by the bot, or by a human ticket if escalated.
+                "cost": {name: float(np.mean(calls * COST_PER_LLM_CALL + ~a * COST_PER_HUMAN_TICKET))
+                         for name, a in auto.items()},
+                "ece_raw": ece(raw, y),
+                "ece_calibrated": ece(p_held, y),
+                "p_held": p_held,
             }
         )
     return X, y, raw, per_seed
 
 
 def summarize(per_seed, y):
-    def mean_of(key, i=None):
-        vals = [s[key] if i is None else s[key][i] for s in per_seed]
-        return float(np.mean(vals))
-
-    def policy(name):
-        # Mean over seeds, plus each seed's own held-out point next to its own 95% interval.
-        seeds = [
-            {
-                "seed": seed,
-                "coverage": s[name][0],
-                "risk": s[name][1],
-                "ci": bootstrap_ci(s["p_test"], y[s["test"]], s[f"t_{name}"], seed=seed),
-            }
-            for seed, s in zip(SEEDS, per_seed, strict=True)
-        ]
-        return {"coverage": mean_of(name, 0), "risk": mean_of(name, 1),
-                "cost_per_query": mean_of(f"cost_{name}"), "per_seed": seeds}
+    def policy(name, with_ci=True):
+        out = {
+            "coverage": float(np.mean([s["points"][name][0] for s in per_seed])),
+            "risk": float(np.mean([s["points"][name][1] for s in per_seed])),
+            "cost_per_query": float(np.mean([s["cost"][name] for s in per_seed])),
+        }
+        if with_ci:
+            # Each seed's own held-out point next to its own 95% interval.
+            out["per_seed"] = [
+                {"seed": seed, "coverage": s["points"][name][0], "risk": s["points"][name][1],
+                 "ci": bootstrap_ci(s["auto"][name], y, seed=seed)}
+                for seed, s in zip(SEEDS, per_seed, strict=True)
+            ]
+        return out
 
     return {
         "n_questions": len(y),
         "error_budget": ERROR_BUDGET,
+        "method": f"{N_FOLDS}-fold cross-fitting, seeds {list(SEEDS)}",
         "assumptions": {"cost_per_llm_call": COST_PER_LLM_CALL, "cost_per_human_ticket": COST_PER_HUMAN_TICKET},
-        "guessed": {"coverage": mean_of("guessed", 0), "risk": mean_of("guessed", 1),
-                    "cost_per_query": mean_of("cost_guessed")},
-        "raw_measured": {"coverage": mean_of("raw_measured", 0), "risk": mean_of("raw_measured", 1)},
+        "guessed": policy("guessed"),
+        "raw_measured": policy("raw_measured", with_ci=False),
         "calibrated": policy("calibrated"),
         "budget_safe": {**policy("budget_safe"), "z": SAFE_Z},
-        "ece": {"raw": mean_of("ece_raw"), "calibrated": mean_of("ece_calibrated")},
+        "ece": {"raw": float(np.mean([s["ece_raw"] for s in per_seed])),
+                "calibrated": float(np.mean([s["ece_calibrated"] for s in per_seed]))},
     }
 
 
@@ -186,31 +200,31 @@ def plot(per_seed, y, raw, out):
     import matplotlib.pyplot as plt
 
     first = per_seed[0]
-    test = first["test"]
     fig, ax = plt.subplots(figsize=(6, 4))
-    for name, conf in (("raw similarity", raw[test]), ("calibrated", first["p_test"])):
-        pts = sorted(curve_points(conf, y[test]))
-        ax.plot([c for c, _ in pts], [r for _, r in pts], marker="o", label=name)
-    for key, label, mark in (("calibrated", "chosen: measured error", "s"), ("budget_safe", "chosen: budget-safe", "D")):
-        cov, risk = first[key]
+    for name, conf in (("raw similarity", raw), ("calibrated (held-out)", first["p_held"])):
+        pts = sorted(curve_points(conf, y))
+        ax.plot([c for c, _ in pts], [r for _, r in pts], marker="o", markersize=3, label=name)
+    for key, label, mark in (("guessed", "guessed threshold", "x"), ("calibrated", "chosen: measured error", "s"),
+                             ("budget_safe", "chosen: budget-safe", "D")):
+        cov, risk = first["points"][key]
         ax.scatter([cov], [risk], s=90, marker=mark, color="black", zorder=3, label=label)
     ax.axhline(ERROR_BUDGET, linestyle="--", color="grey", label="error budget")
     ax.set_xlabel("coverage (share auto-resolved)")
     ax.set_ylabel("risk (error rate on auto-resolved)")
-    ax.set_title("Risk-coverage curve (held-out split, seed 0)")
-    ax.legend()
+    ax.set_title(f"Risk-coverage curve ({N_FOLDS}-fold held-out, seed 0)")
+    ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(out / "risk_coverage.png", dpi=150)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="perfect")
-    for name, conf in (("raw similarity", raw[test]), ("calibrated", first["p_test"])):
-        bins = reliability_bins(conf, y[test])
+    for name, conf in (("raw similarity", raw), ("calibrated (held-out)", first["p_held"])):
+        bins = reliability_bins(conf, y)
         ax.plot([b[0] for b in bins], [b[1] for b in bins], marker="o", label=name)
     ax.set_xlabel("stated confidence")
     ax.set_ylabel("actual accuracy")
-    ax.set_title("Reliability diagram (held-out split, seed 0)")
+    ax.set_title(f"Reliability diagram ({N_FOLDS}-fold held-out, seed 0)")
     ax.legend()
     fig.tight_layout()
     fig.savefig(out / "reliability.png", dpi=150)
@@ -244,7 +258,7 @@ def calibrate(rows=None, out=OUT):
     plot(per_seed, y, raw, out)
 
     g = summary["guessed"]
-    print(f"{summary['n_questions']} questions, error budget {ERROR_BUDGET:.0%}, held-out halves, mean of {len(SEEDS)} seeds")
+    print(f"{summary['n_questions']} questions, error budget {ERROR_BUDGET:.0%}, {N_FOLDS}-fold held-out, mean of {len(SEEDS)} seeds")
     print(f"  guessed threshold : auto-resolves {g['coverage']:.0%} at {g['risk']:.0%} error, Rs {g['cost_per_query']:.2f}/query")
     for key, label in (("calibrated", "calibrated, measured error"), ("budget_safe", "calibrated, budget-safe")):
         c = summary[key]
