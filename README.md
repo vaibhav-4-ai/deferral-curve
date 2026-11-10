@@ -111,6 +111,27 @@ FastAPI in one Docker image on Render's free plan (512 MB RAM, 0.1 CPU), set up 
 Each visitor gets 30 questions per day and the whole site 400, checked before any model call. Questions are not
 stored.
 
+### Resource budget: 512 MB, 0.1 CPU
+
+Measured on the live site (Render free plan, 10 live questions, 2026-11-11):
+
+| | Measured | Budget |
+|---|---|---|
+| Peak memory | **148 MB** | 512 MB |
+| Response time p50 / p95 | **862 ms / 1,521 ms** | — |
+
+10 questions is a small sample, so treat the p95 as indicative. Most of the time goes to the two model calls
+(draft and verify), which run on Groq, not on the 0.1 CPU.
+
+What made it fit, and what was left out:
+
+- **Static embeddings instead of a transformer encoder.** model2vec (~30 MB, numpy only) replaces a
+  sentence-transformers model, which would pull in PyTorch and use most of the 512 MB on its own.
+- **No model on the box.** The LLM is an API call, so the server only does retrieval, the calibrator (6 weights)
+  and the hand-off rule.
+- **In-memory index.** 31 pages fit in a numpy array and a BM25 index, so there's no vector database.
+- **One worker, a disk cache instead of Redis.** Repeated questions are answered from the cache without a model call.
+
 ## Reproduce
 
 Nothing needs a GPU or a local setup. GitHub Actions does everything:
