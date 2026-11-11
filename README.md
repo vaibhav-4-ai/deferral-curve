@@ -95,8 +95,8 @@ question ──► hybrid retrieval (BM25 + model2vec) ──┐
 
 170 questions over a 31-page help centre, written for this project:
 - **easy:** answerable from one page
-- **near-miss:** look answerable but need a human, e.g. *"Can I use QuickKart Cash and a coupon together?"*,
-  which no page states
+- **near-miss:** tricky ones. 38 look answerable but need a human, e.g. *"Can I use QuickKart Cash and a coupon
+  together?"*, which no page states. 19 are answerable but should come with a "talk to a human" option.
 - **unanswerable:** topics the help centre deliberately leaves out, like gift cards and warranty
 
 ### Serving
@@ -158,8 +158,9 @@ without an API key.
 - **Test set, not traffic.** 170 self-written questions over a fictional store, not real customer tickets. The
   numbers show the method; they are not a claim about any production deployment, and they're not compared with
   industry deflection rates.
-- **Near-miss questions are the weak spot.** Of 57 near-miss questions, the bot answered 42 wrongly, and the
-  verifier passed many of them, so no signal flags them. These are the errors left above the threshold.
+- **Near-miss questions are the weak spot.** 38 questions look answerable but should go to a human. The agent
+  drafts an answer for them anyway, and the verifier often passes it, so the calibrator has little to go on. Most
+  of the errors left above the threshold are these.
 - **Grading was adjusted after reading answers.** Accepted phrasings were widened for 6 questions, and the 13
   order questions were made stricter (right tool *and* right facts). No question's expected outcome was changed.
   The evaluation also moved from split-half to 5-fold cross-fitting after split-half proved too small for the

@@ -70,8 +70,8 @@ class Agent:
             tool_used, order_id = picked
             tool_note = TOOLS[tool_used](fresh_orders(), order_id)
 
-        k = 3
-        hits = self.retriever.search(query, k=k)
+        k = 3  # pages of context on the first try; 5 on the retry
+        hits = []
         draft = ""
         verified = False
         error = ""
