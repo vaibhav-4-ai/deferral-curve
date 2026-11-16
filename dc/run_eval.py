@@ -34,9 +34,12 @@ def run():
             }
         )
         print(f"{item['id']} correct={correct} verified={result.verified} degraded={result.degraded} {result.error}")
+    # One line of JSON per question (the "JSON lines" format).
+    lines = []
+    for row in rows:
+        lines.append(json.dumps(row, ensure_ascii=False) + "\n")
     with open(RESULTS, "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        f.writelines(lines)
     answered = [r for r in rows if not r["degraded"]]
     right = sum(r["correct"] for r in answered)
     print(f"{right}/{len(answered)} correct when the model was available ({len(rows) - len(answered)} degraded)")

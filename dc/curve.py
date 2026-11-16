@@ -176,9 +176,9 @@ def evaluate(rows):
 
         points = {}
         cost = {}
-        for name in auto:
-            points[name] = decision_point(auto[name], y)
-            cost[name] = cost_per_query(auto[name], calls)
+        for name, answered in auto.items():
+            points[name] = decision_point(answered, y)
+            cost[name] = cost_per_query(answered, calls)
         per_seed.append(
             {
                 "auto": auto,
