@@ -13,7 +13,14 @@ def facts_present(answer, key_facts):
     # key_facts is a list of groups; each group lists accepted phrasings of ONE required fact.
     # The answer is right only if every group is matched by at least one phrasing.
     text = normalize(answer)
-    return all(any(normalize(phrase) in text for phrase in group) for group in key_facts)
+    for group in key_facts:
+        found = False
+        for phrase in group:
+            if normalize(phrase) in text:
+                found = True
+        if not found:
+            return False
+    return True
 
 
 def is_correct(item, result):

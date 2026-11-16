@@ -29,14 +29,25 @@ def load_rows(path=RESULTS):
         return [json.loads(line) for line in f if line.strip()]
 
 
-def operating_point(conf, correct, t):
-    # coverage: share of questions auto-resolved. risk: share of those auto-resolved that were wrong.
+def above(conf, t):
+    # Which questions the bot answers on its own: those with confidence at or above the threshold.
+    # t=None means "no threshold is safe", so nothing is auto-resolved.
     if t is None:
+        return np.zeros(len(conf), dtype=bool)
+    return conf >= t
+
+
+def decision_point(auto, correct):
+    # auto: True where the bot answered on its own. correct: 1 where its answer was right.
+    # coverage: share of questions auto-resolved. risk: share of those auto-resolved that were wrong.
+    if not auto.any():
         return 0.0, 0.0
-    covered = conf >= t
-    if not covered.any():
-        return 0.0, 0.0
-    return float(covered.mean()), float(1.0 - correct[covered].mean())
+    return float(auto.mean()), float(1.0 - correct[auto].mean())
+
+
+def operating_point(conf, correct, t):
+    # Coverage and risk if the threshold were t.
+    return decision_point(above(conf, t), correct)
 
 
 def risk_upper_bound(errors, n, z):
@@ -54,26 +65,34 @@ def pick_threshold(conf, correct, budget, z=0.0):
     # The lowest threshold (= most questions auto-resolved) whose error rate stays within budget.
     # z=0 trusts the error rate measured on the calibration data. z>0 demands that even a pessimistic
     # estimate of it stays within budget, so the budget also holds on questions the policy hasn't seen.
-    best_t, best_cov = None, 0.0
-    for t in np.unique(conf):
+    best_t = None
+    best_coverage = 0.0
+    for t in np.unique(conf):  # try every confidence value that occurs, as the threshold
         covered = conf >= t
         n = int(covered.sum())
         errors = n - float(correct[covered].sum())
-        if risk_upper_bound(errors, n, z) <= budget and n / len(conf) > best_cov:
-            best_t, best_cov = float(t), n / len(conf)
+        coverage = n / len(conf)
+        if risk_upper_bound(errors, n, z) <= budget and coverage > best_coverage:
+            best_t = float(t)
+            best_coverage = coverage
     return best_t
 
 
-def cost_per_query(conf, calls, t):
-    # Every question gets resolved: by the bot, or by a human if escalated.
-    escalated = np.ones(len(conf), dtype=bool) if t is None else conf < t
-    return float(np.mean(calls * COST_PER_LLM_CALL + escalated * COST_PER_HUMAN_TICKET))
+def cost_per_query(auto, calls):
+    # Every question gets resolved: by the bot, or by a human ticket if the bot didn't answer on its own.
+    # ~auto means "not auto-resolved".
+    return float(np.mean(calls * COST_PER_LLM_CALL + ~auto * COST_PER_HUMAN_TICKET))
+
+
+def bin_numbers(conf, bins):
+    # Which confidence bucket each question falls in: 0 for 0-20%, 1 for 20-40%, and so on (with 5 buckets).
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    return np.clip(np.digitize(conf, edges[1:-1]), 0, bins - 1)
 
 
 def ece(conf, correct, bins=5):
     # Expected calibration error: average gap between "how sure it said it was" and "how often it was right".
-    edges = np.linspace(0.0, 1.0, bins + 1)
-    idx = np.clip(np.digitize(conf, edges[1:-1]), 0, bins - 1)
+    idx = bin_numbers(conf, bins)
     total = 0.0
     for b in range(bins):
         mask = idx == b
@@ -83,20 +102,14 @@ def ece(conf, correct, bins=5):
 
 
 def reliability_bins(conf, correct, bins=5):
-    edges = np.linspace(0.0, 1.0, bins + 1)
-    idx = np.clip(np.digitize(conf, edges[1:-1]), 0, bins - 1)
-    return [
-        (float(conf[idx == b].mean()), float(correct[idx == b].mean()), int((idx == b).sum()))
-        for b in range(bins)
-        if (idx == b).any()
-    ]
-
-
-def decision_point(auto, correct):
-    # Coverage and risk from per-question decisions (True = the bot answered on its own).
-    if not auto.any():
-        return 0.0, 0.0
-    return float(auto.mean()), float(1.0 - correct[auto].mean())
+    # One dot per non-empty bucket: (average confidence, share actually right, number of questions).
+    idx = bin_numbers(conf, bins)
+    dots = []
+    for b in range(bins):
+        mask = idx == b
+        if mask.any():
+            dots.append((float(conf[mask].mean()), float(correct[mask].mean()), int(mask.sum())))
+    return dots
 
 
 def bootstrap_ci(auto, correct, seed):
@@ -106,7 +119,7 @@ def bootstrap_ci(auto, correct, seed):
     n = len(auto)
     coverage, risk = [], []
     for _ in range(N_BOOT):
-        s = rng.integers(0, n, n)
+        s = rng.integers(0, n, n)  # n question numbers picked at random, repeats allowed
         cov, r = decision_point(auto[s], correct[s])
         coverage.append(cov)
         if cov > 0:
@@ -117,11 +130,11 @@ def bootstrap_ci(auto, correct, seed):
 
 
 def curve_points(conf, correct):
-    return [operating_point(conf, correct, float(t)) for t in np.unique(conf)]
-
-
-def above(conf, t):
-    return np.zeros(len(conf), dtype=bool) if t is None else conf >= t
+    # The whole risk-coverage curve: one (coverage, risk) point for every possible threshold.
+    points = []
+    for t in np.unique(conf):
+        points.append(operating_point(conf, correct, float(t)))
+    return points
 
 
 def evaluate(rows):
@@ -135,26 +148,42 @@ def evaluate(rows):
 
     per_seed = []
     for seed in SEEDS:
-        folds = np.array_split(np.random.default_rng(seed).permutation(n), N_FOLDS)
+        # Shuffle the question numbers, then cut them into 5 groups (folds).
+        shuffled = np.random.default_rng(seed).permutation(n)
+        folds = np.array_split(shuffled, N_FOLDS)
+
+        # For each policy: True where the bot would answer on its own.
         p_held = np.zeros(n)
-        auto = {name: np.zeros(n, dtype=bool) for name in ("raw_measured", "calibrated", "budget_safe")}
-        auto["guessed"] = raw >= GUESSED_THRESHOLD  # nothing to fit: the guessed control
+        auto = {
+            "guessed": raw >= GUESSED_THRESHOLD,  # nothing to fit: the guessed control
+            "raw_measured": np.zeros(n, dtype=bool),
+            "calibrated": np.zeros(n, dtype=bool),
+            "budget_safe": np.zeros(n, dtype=bool),
+        }
         for fold in folds:
-            train = np.setdiff1d(np.arange(n), fold)
+            train = np.setdiff1d(np.arange(n), fold)  # every question that is NOT in this fold
             model = Calibrator().fit(X[train], y[train])
             p_train = model.predict(X[train])
             p_held[fold] = model.predict(X[fold])
-            auto["raw_measured"][fold] = above(raw[fold], pick_threshold(raw[train], y[train], ERROR_BUDGET))
-            auto["calibrated"][fold] = above(p_held[fold], pick_threshold(p_train, y[train], ERROR_BUDGET))
-            auto["budget_safe"][fold] = above(
-                p_held[fold], pick_threshold(p_train, y[train], ERROR_BUDGET, z=SAFE_Z))
+
+            # Thresholds are picked on the training questions only, then applied to this fold.
+            t_raw = pick_threshold(raw[train], y[train], ERROR_BUDGET)
+            t_measured = pick_threshold(p_train, y[train], ERROR_BUDGET)
+            t_safe = pick_threshold(p_train, y[train], ERROR_BUDGET, z=SAFE_Z)
+            auto["raw_measured"][fold] = above(raw[fold], t_raw)
+            auto["calibrated"][fold] = above(p_held[fold], t_measured)
+            auto["budget_safe"][fold] = above(p_held[fold], t_safe)
+
+        points = {}
+        cost = {}
+        for name in auto:
+            points[name] = decision_point(auto[name], y)
+            cost[name] = cost_per_query(auto[name], calls)
         per_seed.append(
             {
                 "auto": auto,
-                "points": {name: decision_point(a, y) for name, a in auto.items()},
-                # Every question is resolved: by the bot, or by a human ticket if escalated.
-                "cost": {name: float(np.mean(calls * COST_PER_LLM_CALL + ~a * COST_PER_HUMAN_TICKET))
-                         for name, a in auto.items()},
+                "points": points,
+                "cost": cost,
                 "ece_raw": ece(raw, y),
                 "ece_calibrated": ece(p_held, y),
                 "p_held": p_held,
@@ -163,40 +192,55 @@ def evaluate(rows):
     return X, y, raw, per_seed
 
 
-def summarize(per_seed, y):
-    def policy(name, with_ci=True):
-        out = {
-            "coverage": float(np.mean([s["points"][name][0] for s in per_seed])),
-            "risk": float(np.mean([s["points"][name][1] for s in per_seed])),
-            "cost_per_query": float(np.mean([s["cost"][name] for s in per_seed])),
-        }
-        if with_ci:
-            # Each seed's own held-out point next to its own 95% interval.
-            out["per_seed"] = [
-                {"seed": seed, "coverage": s["points"][name][0], "risk": s["points"][name][1],
-                 "ci": bootstrap_ci(s["auto"][name], y, seed=seed)}
-                for seed, s in zip(SEEDS, per_seed, strict=True)
-            ]
-        return out
+def policy_summary(name, per_seed, y, with_ci=True):
+    # One policy's numbers averaged over the seeds, plus each seed's own point next to its own 95% interval.
+    coverages = [s["points"][name][0] for s in per_seed]
+    risks = [s["points"][name][1] for s in per_seed]
+    costs = [s["cost"][name] for s in per_seed]
+    out = {
+        "coverage": float(np.mean(coverages)),
+        "risk": float(np.mean(risks)),
+        "cost_per_query": float(np.mean(costs)),
+    }
+    if with_ci:
+        out["per_seed"] = []
+        for seed, s in zip(SEEDS, per_seed):
+            coverage, risk = s["points"][name]
+            out["per_seed"].append(
+                {
+                    "seed": seed,
+                    "coverage": coverage,
+                    "risk": risk,
+                    "ci": bootstrap_ci(s["auto"][name], y, seed=seed),
+                }
+            )
+    return out
 
+
+def summarize(per_seed, y):
+    budget_safe = policy_summary("budget_safe", per_seed, y)
+    budget_safe["z"] = SAFE_Z
     return {
         "n_questions": len(y),
         "error_budget": ERROR_BUDGET,
         "method": f"{N_FOLDS}-fold cross-fitting, seeds {list(SEEDS)}",
         "assumptions": {"cost_per_llm_call": COST_PER_LLM_CALL, "cost_per_human_ticket": COST_PER_HUMAN_TICKET},
-        "guessed": policy("guessed"),
-        "raw_measured": policy("raw_measured", with_ci=False),
-        "calibrated": policy("calibrated"),
-        "budget_safe": {**policy("budget_safe"), "z": SAFE_Z},
-        "ece": {"raw": float(np.mean([s["ece_raw"] for s in per_seed])),
-                "calibrated": float(np.mean([s["ece_calibrated"] for s in per_seed]))},
+        "guessed": policy_summary("guessed", per_seed, y),
+        "raw_measured": policy_summary("raw_measured", per_seed, y, with_ci=False),
+        "calibrated": policy_summary("calibrated", per_seed, y),
+        "budget_safe": budget_safe,
+        "ece": {
+            "raw": float(np.mean([s["ece_raw"] for s in per_seed])),
+            "calibrated": float(np.mean([s["ece_calibrated"] for s in per_seed])),
+        },
     }
 
 
 def plot(per_seed, y, raw, out):
+    # Imported here, not at the top: only CI draws charts, so the live server doesn't need matplotlib installed.
     import matplotlib
 
-    matplotlib.use("Agg")
+    matplotlib.use("Agg")  # draw straight to a file; CI has no screen
     import matplotlib.pyplot as plt
 
     first = per_seed[0]
@@ -251,11 +295,13 @@ def calibrate(rows=None, out=OUT):
     threshold_safe = pick_threshold(p_all, y, ERROR_BUDGET, z=SAFE_Z)
 
     out.mkdir(parents=True, exist_ok=True)
-    (out / "calibration.json").write_text(
-        json.dumps({"model": final.to_dict(), "threshold": threshold_safe,
-                    "threshold_measured_error": threshold_measured, "error_budget": ERROR_BUDGET}, indent=1),
-        encoding="utf-8",
-    )
+    saved = {
+        "model": final.to_dict(),
+        "threshold": threshold_safe,
+        "threshold_measured_error": threshold_measured,
+        "error_budget": ERROR_BUDGET,
+    }
+    (out / "calibration.json").write_text(json.dumps(saved, indent=1), encoding="utf-8")
     (out / "curve.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     plot(per_seed, y, raw, out)
 

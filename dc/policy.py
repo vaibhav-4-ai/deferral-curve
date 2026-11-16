@@ -39,28 +39,36 @@ def sigmoid(z):
 class Calibrator:
     """Turns the agent's signals into a probability that its answer is right (logistic regression)."""
 
-    def __init__(self, mean=None, std=None, weights=None, bias=0.0):
-        self.mean = None if mean is None else np.asarray(mean)
-        self.std = None if std is None else np.asarray(std)
-        self.weights = None if weights is None else np.asarray(weights)
-        self.bias = bias
+    def __init__(self):
+        # Empty until fit() learns these from data, or load_calibration() reads them from the saved file.
+        self.mean = None
+        self.std = None
+        self.weights = None
+        self.bias = 0.0
 
     def fit(self, X, y, l2=1.0, steps=3000, lr=0.1):
+        # X: one row of signals per question. y: 1 if that answer was right, 0 if wrong.
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
+
+        # Standardize: put every signal on the same scale (mean 0, spread 1) so none dominates by its units.
         self.mean = X.mean(axis=0)
         self.std = np.where(X.std(axis=0) > 0, X.std(axis=0), 1.0)
         Z = (X - self.mean) / self.std
+
+        # Gradient descent: start from zero and nudge the weights towards better predictions, 3000 times.
         w = np.zeros(Z.shape[1])
         b = 0.0
         for _ in range(steps):
-            p = sigmoid(Z @ w + b)
-            w -= lr * (Z.T @ (p - y) + l2 * w) / len(y)
+            p = sigmoid(Z @ w + b)  # current predictions
+            w -= lr * (Z.T @ (p - y) + l2 * w) / len(y)  # l2 keeps the weights from growing wild
             b -= lr * float(np.mean(p - y))
-        self.weights, self.bias = w, b
+        self.weights = w
+        self.bias = b
         return self
 
     def predict(self, X):
+        # Weighted sum of the signals, squashed into 0..1.
         Z = (np.asarray(X, dtype=float) - self.mean) / self.std
         return sigmoid(Z @ self.weights + self.bias)
 
@@ -85,5 +93,12 @@ def decide(probability, threshold):
 
 
 def load_calibration(path=CALIBRATION):
+    # Reads the calibrator and the threshold that CI fitted. Returns both.
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    return Calibrator(**data["model"]), data["threshold"]
+    saved = data["model"]
+    calibrator = Calibrator()
+    calibrator.mean = np.array(saved["mean"])
+    calibrator.std = np.array(saved["std"])
+    calibrator.weights = np.array(saved["weights"])
+    calibrator.bias = saved["bias"]
+    return calibrator, data["threshold"]

@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 
@@ -34,13 +34,15 @@ class Budget:
 
 @dataclass
 class AgentResult:
+    """Everything the agent hands back for one question."""
+
     answer: str
-    doc_ids: list
-    verified: bool
-    tool_used: str | None
+    doc_ids: list  # the help pages it read, best first
+    verified: bool  # did the checking step say SUPPORTED?
+    tool_used: str | None  # name of the order tool that ran, or None
     llm_calls: int
-    degraded: bool
-    features: dict = field(default_factory=dict)
+    degraded: bool  # True when the model was unreachable and the answer is just the best help page
+    features: dict  # the retriever's match scores, used later as confidence signals
     error: str = ""
 
 
@@ -54,7 +56,10 @@ class Agent:
         self.page_text = dict(retriever.pages)
 
     def _context(self, hits, tool_note):
-        parts = [f"[{doc_id}]\n{self.page_text[doc_id]}" for doc_id, _ in hits]
+        # The text the model is allowed to answer from: each help page under its name, then the tool's result.
+        parts = []
+        for doc_id, _score in hits:
+            parts.append(f"[{doc_id}]\n{self.page_text[doc_id]}")
         if tool_note:
             parts.append(f"[tool result]\n{tool_note}")
         return "\n\n".join(parts)
@@ -68,15 +73,16 @@ class Agent:
         picked = pick_tool(query)
         if picked is not None:
             tool_used, order_id = picked
-            tool_note = TOOLS[tool_used](fresh_orders(), order_id)
+            tool = TOOLS[tool_used]
+            tool_note = tool(fresh_orders(), order_id)  # a fresh copy, so a cancel can't leak into the next question
 
-        k = 3  # pages of context on the first try; 5 on the retry
         hits = []
         draft = ""
         verified = False
+        degraded = False
         error = ""
         try:
-            for _ in range(2):
+            for k in (3, 5):  # 3 pages of context on the first try, 5 on the one retry
                 hits = self.retriever.search(query, k=k)
                 context = self._context(hits, tool_note)
                 budget.spend()
@@ -88,28 +94,24 @@ class Agent:
                 verified = verdict.strip().upper().startswith("SUPPORTED")
                 if verified:
                     break
-                k = 5
         except (BudgetExceeded, LookupError, httpx.HTTPError) as exc:
+            # Never fail silently: keep the reason, so the eval run can print it.
             error = f"{type(exc).__name__}: {exc}"
             if not draft:
-                # Graceful degradation: the model is unavailable, so fall back to retrieval only.
-                return AgentResult(
-                    answer=self.page_text[hits[0][0]],
-                    doc_ids=[doc_id for doc_id, _ in hits],
-                    verified=False,
-                    tool_used=tool_used,
-                    llm_calls=budget.used,
-                    degraded=True,
-                    features=features,
-                    error=error,
-                )
+                # Graceful degradation: the model is unavailable, so fall back to the best help page.
+                degraded = True
+                draft = self.page_text[hits[0][0]]
+
+        doc_ids = []
+        for doc_id, _score in hits:
+            doc_ids.append(doc_id)
         return AgentResult(
             answer=draft,
-            doc_ids=[doc_id for doc_id, _ in hits],
+            doc_ids=doc_ids,
             verified=verified,
             tool_used=tool_used,
             llm_calls=budget.used,
-            degraded=False,
+            degraded=degraded,
             features=features,
             error=error,
         )

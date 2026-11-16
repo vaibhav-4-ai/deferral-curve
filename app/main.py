@@ -1,6 +1,4 @@
 import time
-from collections import defaultdict, deque
-from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
@@ -22,16 +20,38 @@ PAGE = Path(__file__).parent / "index.html"
 QUESTIONS_PER_VISITOR_PER_DAY = 30
 QUESTIONS_PER_SITE_PER_DAY = 400  # hard ceiling for everyone together, in case the per-visitor check is dodged
 MAX_QUESTION_CHARS = 300
+LATENCIES_KEPT = 1000  # /stats is worked out from the most recent 1000 questions
 
 HANDOFF_MESSAGE = "I'm not confident enough to answer this one, so I'm passing it to a human teammate."
 
+# Prometheus metrics, served at /metrics.
 ASKED = Counter("dc_questions_total", "Questions answered, by outcome", ["outcome"])
 LATENCY = Histogram("dc_answer_seconds", "Time to answer one question",
                     buckets=(0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 13, 20))
 
 
 class Question(BaseModel):
+    # The body of POST /ask. FastAPI rejects an empty or overlong question before our code runs.
     query: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
+
+
+class DailyUsage:
+    """Counts today's questions per visitor. Starts from zero again when the date changes."""
+
+    def __init__(self):
+        self.day = date.today()
+        self.counts = {}
+
+    def reset_if_new_day(self):
+        if self.day != date.today():
+            self.day = date.today()
+            self.counts = {}
+
+    def get(self, who):
+        return self.counts.get(who, 0)
+
+    def add(self, who):
+        self.counts[who] = self.get(who) + 1
 
 
 def peak_memory_mb():
@@ -51,34 +71,32 @@ def load_policy():
 
 
 def create_app(llm=None):
-    state = {}
+    # Builds the web app. Tests pass in a fake llm; the live site passes nothing and gets Groq.
+    if llm is None:
+        llm = default_llm(tries=1, timeout=20, cooldown=60)
+    agent = Agent(HybridRetriever(load_corpus()), llm)
+    calibrator, threshold = load_policy()
 
-    @asynccontextmanager
-    async def lifespan(app):
-        live_llm = default_llm(tries=1, timeout=20, cooldown=60) if llm is None else llm
-        state["agent"] = Agent(HybridRetriever(load_corpus()), live_llm)
-        state["calibrator"], state["threshold"] = load_policy()
-        state["latencies"] = deque(maxlen=1000)
-        state["usage"] = defaultdict(int)
-        state["usage_day"] = date.today()
-        yield
+    latencies = []  # seconds taken by recent questions
+    usage = DailyUsage()
 
-    app = FastAPI(title="deferral-curve", lifespan=lifespan)
+    app = FastAPI(title="deferral-curve")
     app.mount("/metrics", make_asgi_app())
 
     def check_visitor_budget(request):
-        if state["usage_day"] != date.today():
-            state["usage"].clear()
-            state["usage_day"] = date.today()
+        usage.reset_if_new_day()
+
         # The hosting proxy appends the real address last; earlier entries can be faked by the visitor.
         visitor = request.headers.get("x-forwarded-for", request.client.host if request.client else "?")
         visitor = visitor.split(",")[-1].strip()
-        if state["usage"]["__all__"] >= QUESTIONS_PER_SITE_PER_DAY:
+
+        # "__all__" counts everyone together.
+        if usage.get("__all__") >= QUESTIONS_PER_SITE_PER_DAY:
             raise HTTPException(429, "The demo has used up today's free model quota. Please try again tomorrow.")
-        if state["usage"][visitor] >= QUESTIONS_PER_VISITOR_PER_DAY:
+        if usage.get(visitor) >= QUESTIONS_PER_VISITOR_PER_DAY:
             raise HTTPException(429, f"Demo limit: {QUESTIONS_PER_VISITOR_PER_DAY} questions per day.")
-        state["usage"][visitor] += 1
-        state["usage"]["__all__"] += 1
+        usage.add(visitor)
+        usage.add("__all__")
 
     @app.get("/", response_class=HTMLResponse)
     def home():
@@ -86,14 +104,14 @@ def create_app(llm=None):
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "policy_loaded": state.get("calibrator") is not None}
+        return {"status": "ok", "policy_loaded": calibrator is not None}
 
     @app.get("/stats")
     def stats():
-        # Response times of the last 1000 questions (ms) and peak memory, for the 512 MB resource-budget write-up.
-        out = {"questions": len(state["latencies"]), "peak_memory_mb": peak_memory_mb()}
-        if state["latencies"]:
-            times = np.array(state["latencies"]) * 1000
+        # Response times of recent questions (ms) and peak memory, for the 512 MB resource-budget write-up.
+        out = {"questions": len(latencies), "peak_memory_mb": peak_memory_mb()}
+        if latencies:
+            times = np.array(latencies) * 1000
             out["p50_ms"] = round(float(np.percentile(times, 50)))
             out["p95_ms"] = round(float(np.percentile(times, 95)))
         return out
@@ -102,18 +120,22 @@ def create_app(llm=None):
     def ask(question: Question, request: Request):
         check_visitor_budget(request)
         start = time.perf_counter()
-        result = state["agent"].answer(question.query)
+        result = agent.answer(question.query)
 
-        if result.degraded or state["calibrator"] is None:
-            confidence, outcome = None, "escalate"
+        if result.degraded or calibrator is None:
+            # The model was unreachable, or there is no fitted policy: always hand off.
+            confidence = None
+            outcome = "escalate"
         else:
             row = {"verified": result.verified, "answer": result.answer,
                    "tool_used": result.tool_used, "features": result.features}
-            confidence = float(state["calibrator"].predict([features(row)])[0])
-            outcome = decide(confidence, state["threshold"])
+            confidence = float(calibrator.predict([features(row)])[0])
+            outcome = decide(confidence, threshold)
 
         elapsed = time.perf_counter() - start
-        state["latencies"].append(elapsed)
+        latencies.append(elapsed)
+        if len(latencies) > LATENCIES_KEPT:
+            latencies.pop(0)  # drop the oldest
         LATENCY.observe(elapsed)
         ASKED.labels(outcome).inc()
         return {
