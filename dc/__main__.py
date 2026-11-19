@@ -8,6 +8,8 @@ def main() -> None:
     sub.add_parser("run", help="run the agent on every test question and save the results")
     sub.add_parser("calibrate", help="fit the hand-off rule and draw the risk-coverage curve")
     sub.add_parser("serve", help="start the web app")
+    sub.add_parser("cmi-experiment", help="does the question's code-mixing (CMI) improve the hand-off?")
+    sub.add_parser("fetch-codemix", help="download the Hinglish model for /codemix (at image build time)")
     args = parser.parse_args()
     if args.command == "eval":
         from dc.eval_retrieval import report
@@ -21,6 +23,14 @@ def main() -> None:
         from dc.run_eval import run
 
         run()
+    elif args.command == "cmi-experiment":
+        from dc.cmi_experiment import run
+
+        run()
+    elif args.command == "fetch-codemix":
+        from dc.codemix import fetch
+
+        fetch()
     elif args.command == "serve":
         import uvicorn
 

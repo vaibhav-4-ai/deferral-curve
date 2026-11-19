@@ -111,6 +111,20 @@ FastAPI in one Docker image on Render's free plan (512 MB RAM, 0.1 CPU), set up 
 Each visitor gets 30 questions per day and the whole site 400, checked before any model call. Questions are not
 stored.
 
+### A second model in the same box: `/codemix`
+
+**[/codemix](https://deferral-curve.onrender.com/codemix)** serves the Hinglish intent + slot model from my
+sister project [codemix-nlu](https://github.com/vaibhav-4-ai/codemix-nlu): hing-mbert fine-tuned on Devanagari +
+romanized + English, exported to int8 ONNX (178 MB), shown next to a Devanagari-only TF-IDF model so visitors see
+the difference. It shares this container because Render's free hours cover one always-on service, and a quantized
+CPU model doesn't need its own box. It uses onnxruntime + tokenizers only (no PyTorch); the files are downloaded
+once at image build time (`python -m dc fetch-codemix`). Its own p50/p95 are on `/stats`.
+
+**Does code-mixing help the hand-off decision?** `python -m dc cmi-experiment` (in CI) adds the question's
+code-mixing index (CMI, from codemix-nlu) as a 7th calibrator signal and measures it the same way as the main
+curve (5-fold held-out, 3 seeds). The result is in `artifacts/cmi_experiment.md`; the live policy keeps 6 signals
+unless CMI helps consistently.
+
 ### Resource budget: 512 MB, 0.1 CPU
 
 Measured on the live site (Render free plan, 10 live questions, 2026-11-11):

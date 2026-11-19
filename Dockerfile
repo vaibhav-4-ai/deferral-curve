@@ -12,7 +12,8 @@ WORKDIR /home/user/app
 
 COPY --chown=user . .
 RUN pip install --no-cache-dir --user -e ".[serve]" \
- && python -c "from dc.embed import load_model; load_model()"
+ && python -c "from dc.embed import load_model; load_model()" \
+ && python -m dc fetch-codemix
 
 EXPOSE 7860
 # One worker: the whole service has to fit in 512 MB.

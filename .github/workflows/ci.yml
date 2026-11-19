@@ -13,7 +13,9 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev]"
-      - run: ruff check .
+      - run: ruff check --output-format=github .
       - run: pytest
       - run: python -m dc eval
       - run: python -m dc calibrate
+      - name: Experiment - does code-mixing (CMI) help the hand-off decision?
+        run: python -m dc cmi-experiment

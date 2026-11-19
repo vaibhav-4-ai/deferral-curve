@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hinglish Intent Demo</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --text:#1d1d1b; --muted:#6b6b66; --line:#e2e2dc;
+          --good:#1f7a4d; --bad:#b3261e; --accent:#2f5bd3; --chip:#eef2fc; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141413; --card:#1e1e1c; --text:#ecece8; --muted:#a3a39c; --line:#33332f;
+            --good:#5cc28f; --bad:#f08a82; --accent:#8aa7ff; --chip:#252b3d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:32px 16px 48px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 24px; }
+  form { display:flex; gap:8px; }
+  input { flex:1; min-width:0; padding:12px; font:inherit; color:var(--text); background:var(--card);
+          border:1px solid var(--line); border-radius:8px; }
+  button { padding:12px 18px; font:inherit; border:0; border-radius:8px; background:var(--accent);
+           color:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .examples { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0 24px; }
+  .examples button { background:var(--card); color:var(--text); border:1px solid var(--line);
+                     padding:6px 10px; font-size:.875rem; }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:560px) { .pair { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .card h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 8px; }
+  .intent { font-size:1.15rem; font-weight:600; word-break:break-word; }
+  .bar { height:6px; background:var(--line); border-radius:3px; margin:8px 0 4px; overflow:hidden; }
+  .bar span { display:block; height:100%; background:var(--accent); border-radius:3px; }
+  .meta { color:var(--muted); font-size:.875rem; }
+  .slots { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+  .slot { background:var(--chip); border-radius:6px; padding:2px 8px; font-size:.875rem; }
+  .slot b { font-weight:600; color:var(--muted); font-size:.75rem; margin-right:4px; }
+  .error { color:var(--bad); }
+  footer { color:var(--muted); font-size:.8rem; margin-top:32px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hinglish requests: Devanagari-only model vs the fixed model</h1>
+  <p class="lead">Type a voice-assistant request in Hindi, Hinglish or English. Left: a simple model trained only on
+    Devanagari Hindi. Right: the fine-tuned model (hing-mbert, trained on Devanagari + romanized + English,
+    shrunk to 8-bit numbers to run on this small CPU server). Both show how sure they are.</p>
+
+  <form id="ask">
+    <input id="q" maxlength="300" placeholder="e.g. kal subah 7 baje ka alarm laga do" autocomplete="off" required>
+    <button id="go">Read it</button>
+  </form>
+  <div class="examples">
+    <button type="button">kal subah 7 baje ka alarm laga do</button>
+    <button type="button">मुझे कल सुबह सात बजे जगा दो</button>
+    <button type="button">living room ki lights dim karo</button>
+    <button type="button">arijit singh ke gaane bajao</button>
+    <button type="button">aaj mumbai me baarish hogi kya</button>
+  </div>
+
+  <div id="out" class="pair" hidden>
+    <div class="card">
+      <h2>Devanagari-only (TF-IDF)</h2>
+      <div id="b-intent" class="intent"></div>
+      <div class="bar"><span id="b-bar"></span></div>
+      <div id="b-conf" class="meta"></div>
+    </div>
+    <div class="card">
+      <h2>Fixed model (int8)</h2>
+      <div id="m-intent" class="intent"></div>
+      <div class="bar"><span id="m-bar"></span></div>
+      <div id="m-conf" class="meta"></div>
+      <div id="m-slots" class="slots"></div>
+    </div>
+  </div>
+  <p id="note" class="meta"></p>
+
+  <footer>Model and measurements: <a href="https://github.com/vaibhav-4-ai/codemix-nlu">codemix-nlu</a>.
+    Served from the same 512 MB container as the <a href="/">QuickKart support demo</a>.
+    Timings and memory: <a href="/stats">/stats</a>.</footer>
+</main>
+<script>
+  const form = document.getElementById("ask");
+  const input = document.getElementById("q");
+  const go = document.getElementById("go");
+
+  function show(prefix, result) {
+    document.getElementById(prefix + "-intent").textContent = result.intent.replace(/_/g, " ");
+    document.getElementById(prefix + "-bar").style.width = Math.round(result.confidence * 100) + "%";
+    document.getElementById(prefix + "-conf").textContent = Math.round(result.confidence * 100) + "% sure";
+  }
+
+  async function read(text) {
+    go.disabled = true;
+    const note = document.getElementById("note");
+    note.textContent = "";
+    note.className = "meta";
+    try {
+      const response = await fetch("/codemix/predict", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text: text})
+      });
+      const body = await response.json();
+      if (!response.ok) { throw new Error(body.detail || "Something went wrong."); }
+      show("b", body.baseline);
+      show("m", body.model);
+      const slots = document.getElementById("m-slots");
+      slots.textContent = "";
+      for (const slot of body.model.slots) {
+        const chip = document.createElement("span");
+        chip.className = "slot";
+        const label = document.createElement("b");
+        label.textContent = slot.type.replace(/_/g, " ");
+        chip.append(label, slot.text);
+        slots.append(chip);
+      }
+      document.getElementById("out").hidden = false;
+      note.textContent = "Answered in " + body.latency_ms + " ms.";
+    } catch (error) {
+      note.textContent = error.message;
+      note.className = "meta error";
+    } finally {
+      go.disabled = false;
+    }
+  }
+
+  form.addEventListener("submit", function (event) { event.preventDefault(); read(input.value); });
+  for (const button of document.querySelectorAll(".examples button")) {
+    button.addEventListener("click", function () { input.value = button.textContent; read(button.textContent); });
+  }
+</script>
+</body>
+</html>

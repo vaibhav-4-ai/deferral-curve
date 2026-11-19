@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# downloaded at image build time (python -m dc fetch-codemix), never committed
+artifacts/codemix/
+artifacts/wordlists.json
