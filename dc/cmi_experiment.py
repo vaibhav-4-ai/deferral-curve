@@ -132,4 +132,4 @@ def run():
         print(f"::notice title=CMI experiment::{verdict}")
         for name, value in by_band.items():
             if value["n"]:
-                print(f"::notice title=Right answers, {name} mixing::{value['right']:.0%} of {value['n']}")
+                print(f"::notice title=Right answers - {name} mixing::{value['right']:.0%} of {value['n']}")

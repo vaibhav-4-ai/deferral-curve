@@ -70,6 +70,15 @@ def peak_memory_mb():
     return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)  # Linux reports kilobytes
 
 
+def cpu_has_vnni():
+    # The int8 model's maths depends on this CPU feature (see dc/codemix.py); shown on /stats.
+    try:
+        flags = Path("/proc/cpuinfo").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return "vnni" in flags
+
+
 def load_policy():
     # The calibrator and threshold fitted in CI. If they're missing, hand everything to a human.
     try:
@@ -139,6 +148,7 @@ def create_app(llm=None, codemix=None):
         if latencies:
             out["p50_ms"], out["p95_ms"] = percentiles_ms(latencies)
         out["codemix_loaded"] = codemix is not None
+        out["cpu_has_vnni"] = cpu_has_vnni()
         out["codemix_sentences"] = len(codemix_latencies)
         if codemix_latencies:
             out["codemix_p50_ms"], out["codemix_p95_ms"] = percentiles_ms(codemix_latencies)

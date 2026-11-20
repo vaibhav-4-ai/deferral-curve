@@ -122,8 +122,9 @@ once at image build time (`python -m dc fetch-codemix`). Its own p50/p95 are on 
 
 **Does code-mixing help the hand-off decision?** `python -m dc cmi-experiment` (in CI) adds the question's
 code-mixing index (CMI, from codemix-nlu) as a 7th calibrator signal and measures it the same way as the main
-curve (5-fold held-out, 3 seeds). The result is in `artifacts/cmi_experiment.md`; the live policy keeps 6 signals
-unless CMI helps consistently.
+curve (5-fold held-out, 3 seeds). **Result: no.** The bot isn't worse on mixed questions (answers right: no
+mixing 68% of 47, light 59% of 54, medium 59% of 46, heavy 70% of 23), and adding CMI raised auto-resolved
+coverage within the budget in 0 of 3 seeds. So the live policy keeps its 6 signals.
 
 ### Resource budget: 512 MB, 0.1 CPU
 
