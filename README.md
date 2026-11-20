@@ -132,8 +132,9 @@ Measured on the live site (Render free plan, 10 live questions, 2026-11-11):
 
 | | Measured | Budget |
 |---|---|---|
-| Peak memory | **148 MB** | 512 MB |
+| Peak memory | **148 MB** (442 MB with the `/codemix` model loaded, 2026-11-20) | 512 MB |
 | Response time p50 / p95 | **862 ms / 1,521 ms** | — |
+| `/codemix` p50 / p95 (12 requests, 2026-11-20) | **104 ms / 147 ms** | — |
 
 10 questions is a small sample, so treat the p95 as indicative. Most of the time goes to the two model calls
 (draft and verify), which run on Groq, not on the 0.1 CPU.
