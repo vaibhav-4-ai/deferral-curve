@@ -108,8 +108,15 @@ def run():
         p7, auto7 = held_out(seven, y, seed)
         cov6, risk6 = decision_point(auto6, y)
         cov7, risk7 = decision_point(auto7, y)
-        result = {"seed": seed, "ece_6": ece(p6, y), "ece_7": ece(p7, y), "coverage_6": cov6, "coverage_7": cov7,
-                  "risk_6": risk6, "risk_7": risk7}  # fmt: skip
+        result = {
+            "seed": seed,
+            "ece_6": ece(p6, y),
+            "ece_7": ece(p7, y),
+            "coverage_6": cov6,
+            "coverage_7": cov7,
+            "risk_6": risk6,
+            "risk_7": risk7,
+        }
         per_seed.append(result)
         lines.append(f"| {seed} | {result['ece_6']:.3f} | {result['ece_7']:.3f} | {cov6:.0%} at {risk6:.0%} error | "
                      f"{cov7:.0%} at {risk7:.0%} error |")

@@ -86,7 +86,12 @@ class Baseline:
         weights = {}
         for index, count in counts.items():
             weights[index] = (1 + math.log(count)) * self.idf[index]
-        norm = math.sqrt(sum(v * v for v in weights.values())) or 1.0
+        squares = 0.0
+        for value in weights.values():
+            squares += value * value
+        norm = math.sqrt(squares)
+        if norm == 0:
+            norm = 1.0  # no known letter pieces at all: avoid dividing by zero
         # 3. one score per intent; softmax turns scores into probabilities
         scores = []
         for k, row in enumerate(self.coef):
@@ -137,17 +142,22 @@ class CodemixModel:
             previous = word_id
         # B-time I-time -> one slot "time: 7 baje". An I- tag only continues the slot right before it.
         slots = []
+        last_word = []  # position of the last word in each slot
         for k, word in enumerate(words):
             if tags[k] == "O":
                 continue
-            kind = tags[k][2:]
-            continues = (tags[k].startswith("I-") and slots and slots[-1]["type"] == kind
-                         and slots[-1]["last"] == k - 1)
+            kind = tags[k][2:]  # "B-time" -> "time"
+            continues = False
+            if tags[k].startswith("I-") and len(slots) > 0:
+                same_kind = slots[-1]["type"] == kind
+                right_after = last_word[-1] == k - 1
+                continues = same_kind and right_after
             if continues:
                 slots[-1]["text"] += " " + word
-                slots[-1]["last"] = k
+                last_word[-1] = k
             else:
-                slots.append({"type": kind, "text": word, "last": k})
+                slots.append({"type": kind, "text": word})
+                last_word.append(k)
         return {
             "words": words,
             "model": {"intent": self.intent_names[best], "confidence": round(probs[best], 3), "slots": slots},

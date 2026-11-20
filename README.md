@@ -123,7 +123,7 @@ once at image build time (`python -m dc fetch-codemix`). Its own p50/p95 are on 
 **Does code-mixing help the hand-off decision?** `python -m dc cmi-experiment` (in CI) adds the question's
 code-mixing index (CMI, from codemix-nlu) as a 7th calibrator signal and measures it the same way as the main
 curve (5-fold held-out, 3 seeds). **Result: no.** The bot isn't worse on mixed questions (answers right: no
-mixing 68% of 47, light 59% of 54, medium 59% of 46, heavy 70% of 23), and adding CMI raised auto-resolved
+mixing 70% of 23, light 59% of 46, medium 59% of 54, heavy 68% of 47), and adding CMI raised auto-resolved
 coverage within the budget in 0 of 3 seeds. So the live policy keeps its 6 signals.
 
 ### Resource budget: 512 MB, 0.1 CPU
@@ -147,6 +147,13 @@ What made it fit, and what was left out:
   and the hand-off rule.
 - **In-memory index.** 31 pages fit in a numpy array and a BM25 index, so there's no vector database.
 - **One worker, a disk cache instead of Redis.** Repeated questions are answered from the cache without a model call.
+
+### Incidents
+
+- **[POSTMORTEM-01](POSTMORTEM-01.md) (2026-11-20):** the live `/codemix` model answered "calendar_query" to
+  everything for about 10 hours, while every CI check passed. The cause was the server's CPU, which has no VNNI
+  instructions. The fix was unsigned 8-bit weights, plus a daily check that asks the live site real questions
+  ([`live-check.yml`](.github/workflows/live-check.yml)).
 
 ## Reproduce
 

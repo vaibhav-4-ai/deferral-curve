@@ -1,0 +1,36 @@
+name: Live answers check
+# Added after POSTMORTEM-01: the live Hinglish model once answered "calendar_query" to everything while
+# every CI check passed (CI's CPU differs from Render's). This asks the LIVE site real questions once a
+# day and fails - GitHub then emails the owner - if the answers are wrong.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  codemix:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Three Hinglish requests with known answers
+        env:
+          DEMO_URL: ${{ vars.DEMO_URL }}
+        run: |
+          if [ -z "$DEMO_URL" ]; then echo "DEMO_URL variable not set; nothing to check"; exit 0; fi
+          failed=0
+          while IFS="|" read -r text expected; do
+            body=$(printf '{"text": "%s"}' "$text")
+            answer=$(curl --fail --silent --show-error --max-time 120 --retry 3 --retry-delay 30 \
+              -X POST -H "content-type: application/json" -d "$body" "${DEMO_URL%/}/codemix/predict" \
+              | python3 -c "import json, sys; print(json.load(sys.stdin)['model']['intent'])")
+            echo "$text -> $answer (expected $expected)"
+            if [ "$answer" != "$expected" ]; then
+              echo "::error title=Live model wrong::$text -> $answer (expected $expected)"
+              failed=1
+            fi
+          done <<'EOF'
+          kal subah 7 baje ka alarm laga do|alarm_set
+          aaj mausam kaisa hai|weather_query
+          gaana bajao arijit singh ka|play_music
+          EOF
+          exit $failed
